@@ -29,6 +29,105 @@ module Chooglin
     end
   end
 
+  class Ai
+    attr_reader :subset_to_take_on_roll, :keep_rolling
+
+    def initialize(subset_to_take_on_roll:, keep_rolling:)
+      @subset_to_take_on_roll = subset_to_take_on_roll
+      @keep_rolling = keep_rolling
+    end
+
+    module Choices
+      module Subset
+        class << self
+          def always_take_max_points
+            lambda do |roll, current_points|
+              roll.valid_subsets.max {|subset_a, subset_b| subset_a.points <=> subset_b.points}
+            end
+          end
+        end
+      end
+
+      module RollOrQuit
+        class << self
+          def continue_by_points_per_dice_remaining(
+            points_to_quit_on_six:   Float::INFINITY,
+            points_to_quit_on_five:  Float::INFINITY,
+            points_to_quit_on_four:  Float::INFINITY,
+            points_to_quit_on_three: Float::INFINITY,
+            points_to_quit_on_two:   Float::INFINITY,
+            points_to_quit_on_one:   Float::INFINITY
+          )
+            lambda do |roll, subset, current_points|
+              dice_remaining = roll.size - subset.size
+
+              case dice_remaining
+              when 6 then current_points < points_to_quit_on_six
+              when 5 then current_points < points_to_quit_on_five
+              when 4 then current_points < points_to_quit_on_four
+              when 3 then current_points < points_to_quit_on_three
+              when 2 then current_points < points_to_quit_on_two
+              when 1 then current_points < points_to_quit_on_one
+              else
+                true
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  class PointAccumulatorSimulation
+    def initialize(ai, num_sims, debug: true)
+      @ai = ai
+      @total_points = 0
+      @num_sims = num_sims
+      @debug = debug
+    end
+
+    def run
+      @num_sims.times do
+        puts '-'*50 if @debug
+
+        score_for_turn = 0
+        number_of_dice = 6
+
+        loop do
+          roll = Roll.random(number_of_dice)
+          puts roll if @debug
+
+          chosen_subset = @ai.subset_to_take_on_roll.call(roll, @total_points)
+
+          if chosen_subset.nil?
+            puts "\033[0;33mBUSTED\033[0;0m (lost #{score_for_turn} points)" if @debug
+            score_for_turn = 0
+            break
+          end
+
+          score_for_turn += chosen_subset.points
+          puts chosen_subset if @debug
+
+          number_of_dice = roll.size - chosen_subset.size
+
+          if number_of_dice > 0 && !@ai.keep_rolling.call(roll, chosen_subset, score_for_turn)
+            puts "\033[0;32mQUITTING\033[0;0m (with #{score_for_turn} points)" if @debug
+            break
+          elsif number_of_dice == 0
+            puts "\033[0;31mHOT DICE\033[0;0m (with #{score_for_turn} points)" if @debug
+            number_of_dice = 6
+          else
+            puts "\033[0;34mROLLING\033[0;0m (with #{number_of_dice} dice at #{score_for_turn} points)" if @debug
+          end
+        end
+
+        @total_points += score_for_turn
+      end
+
+      printf("%s: %.2f\n", "Average Score", (@total_points / @num_sims.to_f))
+    end
+  end
+
   class Roll
     # class methods
     class << self
@@ -87,6 +186,11 @@ module Chooglin
     end
     cache_result_for :subsets
 
+    def valid_subsets
+      subsets.select(&:valid_for_scoring?)
+    end
+    cache_result_for :valid_subsets
+
     def to_s
       "<##{self.class.name} @dice_values=#{@dice_values.to_s}>"
     end
@@ -111,6 +215,10 @@ module Chooglin
 
       def num_scoring_dice
         scores.map(&:num_dice_needed).reduce(:+)
+      end
+
+      def points
+        scores.map(&:points).reduce(:+)
       end
 
       def scored?
@@ -363,22 +471,24 @@ module Chooglin
   end
 end
 
-# 10.times do
-#   puts Chooglin::Roll.random(6)
-# end
+conservative_bot = Chooglin::Ai.new(
+  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.always_take_max_points,
+  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+    points_to_quit_on_one: 0
+  )
+)
+kevin_bot = Chooglin::Ai.new(
+  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.always_take_max_points,
+  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+    points_to_quit_on_two: 2000,
+    points_to_quit_on_one: 1500
+  )
+)
 
-# tab = "  "
-# roll = Chooglin::Roll.new(1,2,3,4,5,6)
-# puts roll.to_s
-# roll.subsets.select(&:valid_for_scoring?).each do |subset|
-#   puts "#{tab}#{subset.to_s}"
-#   subset.scores.each do |score|
-#     puts "#{tab*2}#{score.to_s} #{score.points}"
-#   end
-# end
-
-Chooglin.bust_survive_hotdice_probs
-
-# Chooglin::Roll.all(4).each do |roll|
-#   puts roll
-# end
+[
+  conservative_bot,
+  kevin_bot,
+].each do |bot|
+  sim = Chooglin::PointAccumulatorSimulation.new(bot, 10_000, debug: false)
+  sim.run
+end
