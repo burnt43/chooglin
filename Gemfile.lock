@@ -1,0 +1,25 @@
+GIT
+  remote: https://github.com/burnt43/digits.git
+  revision: b0448ea17fd2ea7c15012cffe2f71735a95d2cf0
+  specs:
+    digits (0.0.1)
+
+GIT
+  remote: https://github.com/burnt43/method-result-caching.git
+  revision: b0422e9b06807e3cc99d9f7c9252542b6b04125f
+  specs:
+    method-result-caching (0.0.2)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  digits!
+  method-result-caching!
+
+BUNDLED WITH
+   1.17.1
