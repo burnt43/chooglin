@@ -40,9 +40,67 @@ module Chooglin
     module Choices
       module Subset
         class << self
-          def always_take_max_points
+          def take_max_points
             lambda do |roll, current_points|
               roll.valid_subsets.max {|subset_a, subset_b| subset_a.points <=> subset_b.points}
+            end
+          end
+
+          def take_min_points_and_min_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.points <=> subset_b.points
+                comp == 0 ? subset_a.size <=> subset_b.size : comp
+              end
+            end
+          end
+
+          def take_min_points_and_max_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.points <=> subset_b.points
+                comp == 0 ? subset_b.size <=> subset_a.size : comp
+              end
+            end
+          end
+
+          def take_min_dice_and_max_points
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.size <=> subset_b.size
+                comp == 0 ? subset_b.points <=> subset_a.points : comp
+              end
+            end
+          end
+
+          def take_min_dice_and_max_points_per_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.size <=> subset_b.size
+                comp == 0 ? subset_b.points_per_dice <=> subset_a.points_per_dice : comp
+              end
+            end
+          end
+
+          def take_max_points_per_dice_and_max_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.max do |subset_a, subset_b|
+                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
+                if comp == 0
+                  subset_a.size <=> subset_b.size
+                else
+                  comp
+                end
+              end
+            end
+          end
+
+          def take_max_points_per_dice_and_min_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.max do |subset_a, subset_b|
+                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
+                comp == 0 ? subset_b.size <=> subset_a.size : comp
+              end
             end
           end
         end
@@ -51,7 +109,6 @@ module Chooglin
       module RollOrQuit
         class << self
           def continue_by_points_per_dice_remaining(
-            points_to_quit_on_six:   Float::INFINITY,
             points_to_quit_on_five:  Float::INFINITY,
             points_to_quit_on_four:  Float::INFINITY,
             points_to_quit_on_three: Float::INFINITY,
@@ -62,7 +119,6 @@ module Chooglin
               dice_remaining = roll.size - subset.size
 
               case dice_remaining
-              when 6 then current_points < points_to_quit_on_six
               when 5 then current_points < points_to_quit_on_five
               when 4 then current_points < points_to_quit_on_four
               when 3 then current_points < points_to_quit_on_three
@@ -124,7 +180,7 @@ module Chooglin
         @total_points += score_for_turn
       end
 
-      printf("%s: %.2f\n", "Average Score", (@total_points / @num_sims.to_f))
+      @total_points / @num_sims.to_f
     end
   end
 
@@ -220,6 +276,12 @@ module Chooglin
       def points
         scores.map(&:points).reduce(:+)
       end
+      cache_result_for :points
+
+      def points_per_dice
+        points / size.to_f
+      end
+      cache_result_for :points_per_dice
 
       def scored?
         !scores.empty?
@@ -471,24 +533,26 @@ module Chooglin
   end
 end
 
-conservative_bot = Chooglin::Ai.new(
-  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.always_take_max_points,
-  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
-    points_to_quit_on_one: 0
+%w[
+  take_max_points
+  take_min_points_and_min_dice
+  take_min_points_and_max_dice
+  take_max_points_per_dice_and_max_dice
+  take_max_points_per_dice_and_min_dice
+  take_min_dice_and_max_points
+  take_min_dice_and_max_points_per_dice
+].each do |method_name|
+  bot = Chooglin::Ai.new(
+    subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.send(method_name),
+#     keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+#       points_to_quit_on_one: 0
+#     )
+    keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+      points_to_quit_on_two: 2000,
+      points_to_quit_on_one: 1500
+    )
   )
-)
-kevin_bot = Chooglin::Ai.new(
-  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.always_take_max_points,
-  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
-    points_to_quit_on_two: 2000,
-    points_to_quit_on_one: 1500
-  )
-)
-
-[
-  conservative_bot,
-  kevin_bot,
-].each do |bot|
   sim = Chooglin::PointAccumulatorSimulation.new(bot, 10_000, debug: false)
-  sim.run
+  result = sim.run
+  printf("%-50s %-50s %.2f\n", method_name, "Average Score", result)
 end
