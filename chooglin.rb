@@ -480,8 +480,9 @@ module Chooglin
       @pots.push(pot_to_add)
     end
 
+    # TODO: fix first subset after successfull steal is marked as unearned_stolen, but this should remain nil to be set later
     # TODO: this must return a result. the result has the pot, but also how the turn ended (quit, bust, failed steal)
-    # TODO: Track points accumualted, points stolen, points earned.
+    # TODO: Track points accumualted, points stolen, points earned. (this is being done by adding pots to ais)
     def take_turn(
       active_pot: nil,
       previous_player: nil
