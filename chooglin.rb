@@ -6,6 +6,14 @@ require 'method-result-caching'
 
 module Chooglin
   class << self
+    def debug=(value)
+      @debug = value
+    end
+
+    def debug?
+      !!@debug
+    end
+
     def bust_survive_hotdice_probs
       1.upto(6) do |num_dice|
         printf("-----------------\nNumber of Dice: %d\n", num_dice)
@@ -26,161 +34,6 @@ module Chooglin
         printf("%20s: %2.2f%%\n", 'Survive', 100 * ways_to_survive / rolls.size.to_f)
         printf("%20s: %2.2f%%\n", 'Hot Dice', 100 * ways_to_hot_dice / rolls.size.to_f)
       end
-    end
-  end
-
-  class Ai
-    attr_reader :subset_to_take_on_roll, :keep_rolling
-
-    def initialize(subset_to_take_on_roll:, keep_rolling:)
-      @subset_to_take_on_roll = subset_to_take_on_roll
-      @keep_rolling = keep_rolling
-    end
-
-    module Choices
-      module Subset
-        class << self
-          def take_max_points
-            lambda do |roll, current_points|
-              roll.valid_subsets.max {|subset_a, subset_b| subset_a.points <=> subset_b.points}
-            end
-          end
-
-          def take_min_points_and_min_dice
-            lambda do |roll, current_points|
-              roll.valid_subsets.min do |subset_a, subset_b|
-                comp = subset_a.points <=> subset_b.points
-                comp == 0 ? subset_a.size <=> subset_b.size : comp
-              end
-            end
-          end
-
-          def take_min_points_and_max_dice
-            lambda do |roll, current_points|
-              roll.valid_subsets.min do |subset_a, subset_b|
-                comp = subset_a.points <=> subset_b.points
-                comp == 0 ? subset_b.size <=> subset_a.size : comp
-              end
-            end
-          end
-
-          def take_min_dice_and_max_points
-            lambda do |roll, current_points|
-              roll.valid_subsets.min do |subset_a, subset_b|
-                comp = subset_a.size <=> subset_b.size
-                comp == 0 ? subset_b.points <=> subset_a.points : comp
-              end
-            end
-          end
-
-          def take_min_dice_and_max_points_per_dice
-            lambda do |roll, current_points|
-              roll.valid_subsets.min do |subset_a, subset_b|
-                comp = subset_a.size <=> subset_b.size
-                comp == 0 ? subset_b.points_per_dice <=> subset_a.points_per_dice : comp
-              end
-            end
-          end
-
-          def take_max_points_per_dice_and_max_dice
-            lambda do |roll, current_points|
-              roll.valid_subsets.max do |subset_a, subset_b|
-                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
-                if comp == 0
-                  subset_a.size <=> subset_b.size
-                else
-                  comp
-                end
-              end
-            end
-          end
-
-          def take_max_points_per_dice_and_min_dice
-            lambda do |roll, current_points|
-              roll.valid_subsets.max do |subset_a, subset_b|
-                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
-                comp == 0 ? subset_b.size <=> subset_a.size : comp
-              end
-            end
-          end
-        end
-      end
-
-      module RollOrQuit
-        class << self
-          def continue_by_points_per_dice_remaining(
-            points_to_quit_on_five:  Float::INFINITY,
-            points_to_quit_on_four:  Float::INFINITY,
-            points_to_quit_on_three: Float::INFINITY,
-            points_to_quit_on_two:   Float::INFINITY,
-            points_to_quit_on_one:   Float::INFINITY
-          )
-            lambda do |roll, subset, current_points|
-              dice_remaining = roll.size - subset.size
-
-              case dice_remaining
-              when 5 then current_points < points_to_quit_on_five
-              when 4 then current_points < points_to_quit_on_four
-              when 3 then current_points < points_to_quit_on_three
-              when 2 then current_points < points_to_quit_on_two
-              when 1 then current_points < points_to_quit_on_one
-              else
-                true
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-
-  class PointAccumulatorSimulation
-    def initialize(ai, num_sims, debug: true)
-      @ai = ai
-      @total_points = 0
-      @num_sims = num_sims
-      @debug = debug
-    end
-
-    def run
-      @num_sims.times do
-        puts '-'*50 if @debug
-
-        score_for_turn = 0
-        number_of_dice = 6
-
-        loop do
-          roll = Roll.random(number_of_dice)
-          puts roll if @debug
-
-          chosen_subset = @ai.subset_to_take_on_roll.call(roll, @total_points)
-
-          if chosen_subset.nil?
-            puts "\033[0;33mBUSTED\033[0;0m (lost #{score_for_turn} points)" if @debug
-            score_for_turn = 0
-            break
-          end
-
-          score_for_turn += chosen_subset.points
-          puts chosen_subset if @debug
-
-          number_of_dice = roll.size - chosen_subset.size
-
-          if number_of_dice > 0 && !@ai.keep_rolling.call(roll, chosen_subset, score_for_turn)
-            puts "\033[0;32mQUITTING\033[0;0m (with #{score_for_turn} points)" if @debug
-            break
-          elsif number_of_dice == 0
-            puts "\033[0;31mHOT DICE\033[0;0m (with #{score_for_turn} points)" if @debug
-            number_of_dice = 6
-          else
-            puts "\033[0;34mROLLING\033[0;0m (with #{number_of_dice} dice at #{score_for_turn} points)" if @debug
-          end
-        end
-
-        @total_points += score_for_turn
-      end
-
-      @total_points / @num_sims.to_f
     end
   end
 
@@ -251,16 +104,35 @@ module Chooglin
       "<##{self.class.name} @dice_values=#{@dice_values.to_s}>"
     end
 
-    #
     class Subset
+      STATES = %i[
+        earned_undefended
+        earned_defended
+        earned_stolen
+        unearned_stolen
+        lost_busted
+        lost_stolen
+      ]
+
       # class methods
       def initialize(*dice_values)
         @dice_values = dice_values
+        @state = nil
       end
 
       # instance methods
       def size
         @dice_values.size
+      end
+
+      def has_state?
+        !@state.nil?
+      end
+
+      STATES.each do |state_name|
+        define_method "mark_state_#{state_name}!" do
+          @state = state_name
+        end
       end
 
       def valid_for_scoring?
@@ -445,7 +317,7 @@ module Chooglin
       cache_result_for :scores
 
       def to_s
-        "<##{self.class.name} @dice_values=#{@dice_values.to_s}>"
+        "<##{self.class.name} @dice_values=#{@dice_values.to_s} @state=#{@state}>"
       end
     end
 
@@ -531,28 +403,351 @@ module Chooglin
       end
     end
   end
+
+  class Pot
+    attr_reader :subsets
+
+    # class methods
+    def initialize(subsets=[])
+      @subsets = subsets
+    end
+
+    # instance methods
+    def add_subset(subset)
+      @subsets.push(subset)
+    end
+
+    def points
+      @subsets.map(&:points).reduce(:+) || 0
+    end
+
+    def total_dice_used
+      @subsets.map(&:size).reduce(:+) || 0
+    end
+
+    def dice_remaining
+      6 - (total_dice_used % 6)
+    end
+
+    def unmarked_subsets
+      @subsets.reject {|s| s.has_state?}
+    end
+
+    def mark_unmarked_subsets_as(state)
+      unmarked_subsets.each {|s| s.send("mark_state_#{state}!")}
+    end
+
+    # TODO: method for mark unearned_stolen as earned_stolen 
+
+    alias_method :old_clone, :clone
+    def clone
+      self.class.new(subsets.map(&:clone))
+    end
+
+    def to_s
+      "<##{self.class.name} points=#{points}>"
+    end
+  end
+
+  class Ai
+    attr_reader :subset_to_take_on_roll, :keep_rolling, :steal_proc
+    attr_reader :pots
+
+    def initialize(name:, subset_to_take_on_roll:, keep_rolling:, steal_proc:)
+      @name                   = name
+      @subset_to_take_on_roll = subset_to_take_on_roll
+      @keep_rolling           = keep_rolling
+      @steal_proc             = steal_proc
+      @pots                   = []
+    end
+
+    def to_s
+      "<##{self.class.name} @name=#{@name}>"
+    end
+
+    def add_pot!(pot, state: nil)
+      return unless pot
+
+      pot_to_add =
+        if state
+          new_pot = pot.clone
+          new_pot.mark_unmarked_subsets_as(state)
+          new_pot
+        else
+          pot
+        end
+
+      @pots.push(pot_to_add)
+    end
+
+    # TODO: this must return a result. the result has the pot, but also how the turn ended (quit, bust, failed steal)
+    # TODO: Track points accumualted, points stolen, points earned.
+    def take_turn(
+      active_pot: nil,
+      previous_player: nil
+    )
+      puts "--------------------\n#{self} #{__method__}" if Chooglin.debug?
+
+      steal_attempt = false
+      previous_player_debug_name = previous_player&.to_s || 'previous_player'
+
+      if active_pot
+        if steal_proc.call(active_pot)
+          puts "\033[0;36mSTEAL ATTEMPT\033[0;0m (for #{active_pot.points} points)"
+          steal_attempt = true
+        else
+          puts "\033[0;36mNO STEAL\033[0;0m (leaving behind #{active_pot.points} points for #{previous_player_debug_name})"
+
+          previous_player&.add_pot!(active_pot, state: :earned_undefended)
+
+          active_pot = Pot.new
+        end
+      else
+        active_pot = Pot.new
+      end
+
+      dice_remaining = active_pot.dice_remaining
+
+      loop do
+        puts "\033[0;34mROLLING\033[0;0m (with #{dice_remaining} dice at #{active_pot.points} points)" if Chooglin.debug?
+
+        roll = Roll.random(dice_remaining)
+        puts roll if Chooglin.debug?
+
+        chosen_subset = subset_to_take_on_roll.call(roll, @total_points)
+
+        if chosen_subset.nil?
+          if steal_attempt
+            puts "\033[0;36mSTEAL FAILED\033[0;0m (#{active_pot.points} points awarded to #{previous_player_debug_name})" if Chooglin.debug?
+            previous_player&.add_pot!(active_pot, state: :earned_defended)
+            return nil
+          else
+            puts "\033[0;33mBUSTED\033[0;0m (lost #{active_pot.points} points)" if Chooglin.debug?
+            add_pot!(active_pot, state: :lost_busted)
+            return nil
+          end
+        end
+
+        puts chosen_subset if Chooglin.debug?
+
+        if steal_attempt
+          puts "\033[0;36mSTEAL SUCCESSFUL\033[0;0m (#{active_pot.points} points from #{previous_player_debug_name})" if Chooglin.debug?
+          previous_player&.add_pot!(active_pot, state: :lost_stolen)
+          active_pot.add_subset(chosen_subset)
+          active_pot.mark_unmarked_subsets_as(:unearned_stolen)
+          steal_attempt = false
+        else
+          active_pot.add_subset(chosen_subset)
+        end
+
+        dice_remaining = roll.size - chosen_subset.size
+
+        if dice_remaining > 0 && !keep_rolling.call(roll, chosen_subset, active_pot.points)
+          puts "\033[0;32mQUITTING\033[0;0m (with #{active_pot.points} points at #{dice_remaining} dice remaining)" if Chooglin.debug?
+          return active_pot
+        elsif dice_remaining == 0
+          puts "\033[0;31mHOT DICE\033[0;0m (with #{active_pot.points} points)" if Chooglin.debug?
+          dice_remaining = 6
+        end
+      end
+    end
+
+    module Choices
+      module Subset
+        class << self
+          def take_max_points
+            lambda do |roll, current_points|
+              roll.valid_subsets.max {|subset_a, subset_b| subset_a.points <=> subset_b.points}
+            end
+          end
+
+          def take_min_points_and_min_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.points <=> subset_b.points
+                comp == 0 ? subset_a.size <=> subset_b.size : comp
+              end
+            end
+          end
+
+          def take_min_points_and_max_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.points <=> subset_b.points
+                comp == 0 ? subset_b.size <=> subset_a.size : comp
+              end
+            end
+          end
+
+          def take_min_dice_and_max_points
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.size <=> subset_b.size
+                comp == 0 ? subset_b.points <=> subset_a.points : comp
+              end
+            end
+          end
+
+          def take_min_dice_and_max_points_per_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.min do |subset_a, subset_b|
+                comp = subset_a.size <=> subset_b.size
+                comp == 0 ? subset_b.points_per_dice <=> subset_a.points_per_dice : comp
+              end
+            end
+          end
+
+          def take_max_points_per_dice_and_max_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.max do |subset_a, subset_b|
+                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
+                if comp == 0
+                  subset_a.size <=> subset_b.size
+                else
+                  comp
+                end
+              end
+            end
+          end
+
+          def take_max_points_per_dice_and_min_dice
+            lambda do |roll, current_points|
+              roll.valid_subsets.max do |subset_a, subset_b|
+                comp = subset_a.points_per_dice <=> subset_b.points_per_dice
+                comp == 0 ? subset_b.size <=> subset_a.size : comp
+              end
+            end
+          end
+        end
+      end
+
+      module RollOrQuit
+        class << self
+          def continue_by_points_per_dice_remaining(
+            points_to_quit_on_five:  Float::INFINITY,
+            points_to_quit_on_four:  Float::INFINITY,
+            points_to_quit_on_three: Float::INFINITY,
+            points_to_quit_on_two:   Float::INFINITY,
+            points_to_quit_on_one:   Float::INFINITY
+          )
+            lambda do |roll, subset, current_points|
+              dice_remaining = roll.size - subset.size
+
+              case dice_remaining
+              when 5 then current_points < points_to_quit_on_five
+              when 4 then current_points < points_to_quit_on_four
+              when 3 then current_points < points_to_quit_on_three
+              when 2 then current_points < points_to_quit_on_two
+              when 1 then current_points < points_to_quit_on_one
+              else
+                true
+              end
+            end
+          end
+        end
+      end
+
+      module Steal
+        class << self
+          def always_attempt_steal
+            lambda do |active_pot|
+              true
+            end
+          end
+        end
+      end
+    end
+  end
+
+  class GameSimulator
+    def initialize(*ais)
+      raise ArgumentError.new('the game needs at least 3 players.') unless ais.size >= 3
+
+      @ais = ais
+      @current_ai_index = 0
+    end
+
+    def run
+      active_pot  = nil
+      current_ai  = nil
+      previous_ai = nil
+
+      3.times do
+        current_ai = @ais[@current_ai_index]
+
+        active_pot = current_ai.take_turn(
+          active_pot: active_pot,
+          previous_player: previous_ai
+        )
+
+        previous_ai = current_ai
+        increment_current_ai_index
+      end
+
+      @ais.each do |ai|
+        puts '-'*50
+        puts ai
+        ai.pots.each do |pot|
+          puts pot
+          pot.subsets.each do |subset|
+            puts subset
+          end
+        end
+      end
+    end
+
+    def increment_current_ai_index
+      @current_ai_index = (@current_ai_index + 1) % @ais.size
+    end
+  end
+
+  class PointAccumulatorSimulation
+    def initialize(ai, num_sims, debug: true)
+      @ai = ai
+      @total_points = 0
+      @num_sims = num_sims
+      @debug = debug
+    end
+
+    def run
+      @num_sims.times do
+      end
+
+      @total_points / @num_sims.to_f
+    end
+  end
 end
 
-%w[
-  take_max_points
-  take_min_points_and_min_dice
-  take_min_points_and_max_dice
-  take_max_points_per_dice_and_max_dice
-  take_max_points_per_dice_and_min_dice
-  take_min_dice_and_max_points
-  take_min_dice_and_max_points_per_dice
-].each do |method_name|
-  bot = Chooglin::Ai.new(
-    subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.send(method_name),
-#     keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
-#       points_to_quit_on_one: 0
-#     )
-    keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
-      points_to_quit_on_two: 2000,
-      points_to_quit_on_one: 1500
-    )
-  )
-  sim = Chooglin::PointAccumulatorSimulation.new(bot, 10_000, debug: false)
-  result = sim.run
-  printf("%-50s %-50s %.2f\n", method_name, "Average Score", result)
-end
+player1 = Chooglin::Ai.new(
+  name: 'Player 1',
+  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.take_max_points,
+  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+    points_to_quit_on_one: 0
+  ),
+  steal_proc: Chooglin::Ai::Choices::Steal.always_attempt_steal
+)
+
+player2 = Chooglin::Ai.new(
+  name: 'Player 2',
+  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.take_max_points,
+  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+    points_to_quit_on_one: 0
+  ),
+  steal_proc: Chooglin::Ai::Choices::Steal.always_attempt_steal
+)
+
+player3 = Chooglin::Ai.new(
+  name: 'Player 3',
+  subset_to_take_on_roll: Chooglin::Ai::Choices::Subset.take_max_points,
+  keep_rolling: Chooglin::Ai::Choices::RollOrQuit.continue_by_points_per_dice_remaining(
+    points_to_quit_on_one: 0
+  ),
+  steal_proc: Chooglin::Ai::Choices::Steal.always_attempt_steal
+)
+
+Chooglin.debug = true
+Chooglin::GameSimulator.new(
+  player1,
+  player2,
+  player3
+).run
