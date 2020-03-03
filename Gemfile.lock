@@ -12,9 +12,9 @@ GIT
 
 GIT
   remote: https://github.com/burnt43/ruby-lazy-const.git
-  revision: 3a3a0c8cc5c19793e6c928ecbf09eda6020e1567
+  revision: a74031e42bca78bb5ad0a911b5f4cdf3937b9258
   specs:
-    ruby-lazy-const (0.0.1)
+    ruby-lazy-const (0.0.2)
       activesupport
 
 GEM
